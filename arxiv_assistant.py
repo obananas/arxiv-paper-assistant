@@ -35,7 +35,7 @@ def search_arxiv_papers(search_term, target_date, max_results=10):
         search_query = (
             f'search_query=all:{encoded_term}'
             f'+AND+cat:cs.*'
-            f'&start=0&max_results={max_results}'
+            f'&start=0&max_results=10'
             f'&sortBy=submittedDate&sortOrder=descending'
         )
         full_url = base_url + search_query
