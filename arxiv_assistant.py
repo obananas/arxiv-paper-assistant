@@ -27,7 +27,8 @@ def search_arxiv_papers(search_term, target_date, max_results=10):
     papers = []
 
     base_url = 'http://export.arxiv.org/api/query?'
-    search_term = quote_plus(search_term)
+    search_term = quote_plus(search_term[1:-1])
+    print(f"max_results{max_results}")
     # 限定计算机科学领域
     search_query = f'search_query=all:{search_term}+AND+cat:cs.*&start=0&max_results={max_results}&sortBy=submittedDate&sortOrder=descending'
     full_url = base_url + search_query
