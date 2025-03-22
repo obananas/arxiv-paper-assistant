@@ -286,7 +286,7 @@ if __name__ == '__main__':
                     for term in search_terms_str.strip('\'').split(',')]
 
     # 获取的最大论文数
-    max_results = int(os.environ.get("MAX_RESULTS", "10"))
+    max_results = int(os.environ.get("MAX_RESULTS", 10) or 10)
 
     # 获取前一天的日期
     yesterday = get_yesterday()
