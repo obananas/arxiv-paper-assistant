@@ -21,7 +21,7 @@ def get_yesterday_utc():
     return yesterday.strftime('%Y-%m-%d')
 
 
-def search_arxiv_papers(search_term, target_date, max_results=50):
+def search_arxiv_papers(search_term, target_date, max_results=10):
     """
     在arXiv按关键词搜索指定日期的计算机科学领域论文
     改进点：URL编码、布尔逻辑优化、调试输出
@@ -33,7 +33,7 @@ def search_arxiv_papers(search_term, target_date, max_results=50):
         # 编码搜索词并构建查询
         encoded_term = quote_plus(search_term)
         search_query = (
-            f'search_query=(ti:{encoded_term}+OR+abs:{encoded_term})'
+            f'search_query=all:{encoded_term}'
             f'+AND+cat:cs.*'
             f'&start=0&max_results={max_results}'
             f'&sortBy=submittedDate&sortOrder=descending'
@@ -186,7 +186,7 @@ if __name__ == '__main__':
         },
         'search_terms': [],
         'receiver_emails': list(filter(None, os.getenv("RECEIVER_EMAILS", "").split(','))),
-        'max_results': int(os.getenv("MAX_RESULTS", 50))
+        'max_results': int(os.getenv("MAX_RESULTS", 10) or 10)
     }
 
     # 解析关键词（支持带空格和引号）
