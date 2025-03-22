@@ -8,192 +8,192 @@ from email.header import Header
 from openai import OpenAI
 import xml.etree.ElementTree as ET
 import os
-import csv
-from urllib.parse import quote_plus
-import time
-import logging
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
 
-def get_yesterday_utc():
-    """获取UTC时间前一天"""
-    return (datetime.datetime.now(datetime.timezone.utc) 
-            - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+def get_yesterday():
+    """获取前一天的日期"""
+    today = datetime.datetime.now()
+    yesterday = today - datetime.timedelta(days=1)
+    return yesterday.strftime('%Y-%m-%d')
 
-def safe_xml_text(element, path, namespaces, default="N/A"):
-    """安全获取XML文本"""
-    elem = element.find(path, namespaces)
-    return elem.text.strip() if elem is not None and elem.text else default
 
-def fetch_arxiv_papers(search_term, target_date, max_retries=3):
-    """带重试和分页的论文获取"""
-    papers = []
-    start = 0
-    max_results = 100  # 每页最大数量
-    base_url = "http://export.arxiv.org/api/query?"
+def search_arxiv_papers(search_term, target_date, max_results=50):
+    """在arXiv搜索指定日期和关键词的CS领域论文"""
+    try:
+        target_date_dt = datetime.datetime.strptime(target_date, "%Y-%m-%d")
+        from_date = target_date_dt.strftime("%Y%m%d")
+    except ValueError as e:
+        print(f"日期格式错误: {target_date}")
+        return []
+
+    params = {
+        'search_query': f'all:"{search_term}" AND cat:cs.* AND submittedDate:[{from_date} TO {from_date}]',
+        'start': 0,
+        'max_results': max_results,
+        'sortBy': 'submittedDate',
+        'sortOrder': 'ascending'
+    }
+
+    try:
+        response = requests.get('http://export.arxiv.org/api/query', params=params)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"API请求失败: {e}")
+        return []
+
+    try:
+        root = ET.fromstring(response.content)
+    except ET.ParseError as e:
+        print(f"XML解析失败: {e}")
+        return []
+
     namespaces = {
         'atom': 'http://www.w3.org/2005/Atom',
         'arxiv': 'http://arxiv.org/schemas/atom'
     }
-    while True:
-        for attempt in range(max_retries):
-            try:
-                # 构造请求参数
-                params = {
-                    "search_query": f'(ti:{quote_plus(search_term)} OR abs:{quote_plus(search_term)}) AND cat:cs.*',
-                    "start": start,
-                    "max_results": max_results,
-                    "sortBy": "submittedDate",
-                    "sortOrder": "descending"
-                }
-                response = requests.get(base_url, params=params, timeout=45)
-                response.raise_for_status()
-                
-                root = ET.fromstring(response.content)
-                entries = root.findall('.//{http://www.w3.org/2005/Atom}entry')
-                if not entries:
-                    return papers  # 无更多数据
 
-                # 解析条目
-                new_papers = []
-                for entry in entries:
-                    pub_date = datetime.datetime.strptime(
-                        safe_xml_text(entry, './atom:published', namespaces),
-                        "%Y-%m-%dT%H:%M:%SZ"
-                    ).strftime("%Y-%m-%d")
-                    
-                    if pub_date != target_date:
-                        continue
-                        
-                    paper = {
-                        "arxiv_id": entry.find('./atom:id', namespaces).text.split('/')[-1],
-                        "title": safe_xml_text(entry, './atom:title', namespaces),
-                        "summary": safe_xml_text(entry, './atom:summary', namespaces),
-                        "pub_date": pub_date,
-                        "authors": [safe_xml_text(a, './atom:name', namespaces) 
-                                  for a in entry.findall('./atom:author', namespaces)],
-                        "categories": [c.get('term') 
-                                     for c in entry.findall('./atom:category', namespaces)],
-                        "comments": safe_xml_text(entry, './arxiv:comment', namespaces),
-                    }
-                    new_papers.append(paper)
-                
-                papers.extend(new_papers)
-                start += len(entries)
-                break  # 成功则跳出重试循环
-
-            except (requests.RequestException, ET.ParseError) as e:
-                logging.warning(f"请求失败 (尝试 {attempt+1}/{max_retries}): {str(e)}")
-                time.sleep(5 * (attempt + 1))
-                continue
-        else:
-            logging.error(f"无法获取 {search_term} 的论文")
-            break
+    papers = []
+    for entry in root.findall('.//atom:entry', namespaces):
+        try:
+            title = entry.find('./atom:title', namespaces).text.strip()
+            summary = entry.find('./atom:summary', namespaces).text.strip()
+            url = entry.find('./atom:id', namespaces).text.strip()
+            pub_date = entry.find('./atom:published', namespaces).text[:10]
             
+            authors = [a.find('./atom:name', namespaces).text.strip() 
+                      for a in entry.findall('./atom:author', namespaces)]
+            
+            paper = {
+                'title': title,
+                'authors': authors,
+                'url': url,
+                'arxiv_id': url.split('/')[-1],
+                'pub_date': pub_date,
+                'summary': summary,
+                'categories': [c.get('term') for c in entry.findall('./atom:category', namespaces)],
+                'comments': (c.text.strip() if (c := entry.find('./arxiv:comment', namespaces)) is not None else None)
+            }
+            papers.append(paper)
+        except Exception as e:
+            print(f"解析论文条目时出错: {e}")
+            continue
+
     return papers
 
-def robust_ai_process(text, prompt_template, config, max_length=6000):
-    """带长度检查和重试的AI处理"""
-    text = text[:max_length]  # 防止超长文本
-    
-    for _ in range(3):
-        try:
-            result = process_with_openai(
-                text, prompt_template,
-                config['openai']['api_key'],
-                config['openai']['model'],
-                config['openai']['api_base']
-            )
-            if result and len(result) > 20:  # 验证有效响应
-                return result
-        except Exception as e:
-            logging.warning(f"AI处理失败: {str(e)}")
-            time.sleep(2)
-    
-    return "⚠️ 内容生成失败"
 
-def format_paper(paper):
-    """容错性更强的格式化"""
-    parts = [
-        f"📄 标题: {paper.get('title', '未知标题')}",
-        f"👥 作者: {', '.join(paper.get('authors', ['未知作者']))}",
-        f"🏷️ 分类: {', '.join(paper.get('categories', ['未分类']))}",
-        f"📅 日期: {paper.get('pub_date', '未知日期')}",
-    ]
+def process_with_openai(text, prompt_template, openai_api_key, model_name="gpt-3.5-turbo", api_base=None):
+    """使用OpenAI处理文本"""
+    prompt = prompt_template.format(text=text)
     
-    if paper.get('comments'):
-        parts.append(f"💬 评论: {paper['comments']}")
-        
-    parts += [
-        f"🔗 链接: https://arxiv.org/abs/{paper['arxiv_id']}",
-        f"📄 PDF: https://arxiv.org/pdf/{paper['arxiv_id']}.pdf",
-    ]
-    
-    if 'contribution' in paper:
-        parts.append(f"\n🌟 贡献要点:\n{paper['contribution']}")
-    
-    if 'summary_zh' in paper:
-        parts.append(f"\n🌐 中文摘要:\n{paper['summary_zh']}")
-    
-    parts.append(f"\n📜 原始摘要:\n{paper.get('summary', '无摘要')}")
-    
-    return "\n".join(parts) + "\n" + "-"*70 + "\n"
-
-if __name__ == "__main__":
-    # 配置初始化
-    config = {
-        "sender": {
-            "email": os.getenv("SENDER_EMAIL"),
-            "password": os.getenv("SENDER_PASSWORD"),
-            "smtp_server": "smtp.qq.com",
-            "smtp_port": 465
-        },
-        "openai": {
-            "api_key": os.getenv("OPENAI_API_KEY"),
-            "model": os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
-            "api_base": os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-        }
-    }
-    
-    # 关键词解析
-    search_terms = next(csv.reader([os.getenv("SEARCH_TERMS", "")])) if os.getenv("SEARCH_TERMS") else []
-    
-    # 主流程
-    target_date = get_yesterday_utc()
-    all_papers = {}
-    
-    for term in search_terms:
-        logging.info(f"处理关键词: {term}")
-        papers = fetch_arxiv_papers(term, target_date)
-        
-        for paper in papers:
-            pid = paper["arxiv_id"]
-            if pid not in all_papers:
-                # 并发处理AI请求
-                paper["summary_zh"] = robust_ai_process(
-                    paper["summary"], 
-                    "翻译为中文，保留术语:\n{text}",
-                    config
-                )
-                paper["contribution"] = robust_ai_process(
-                    paper["summary"],
-                    "用中文总结核心贡献:\n{text}",
-                    config
-                )
-                all_papers[pid] = paper
-                logging.info(f"已处理论文: {pid[:10]}...")
-
-    # 发送邮件
-    if all_papers:
-        content = f"arXiv论文日报 {target_date}\n\n" + "\n".join([format_paper(p) for p in all_papers.values()])
-        send_email(
-            subject=f"arXiv日报 {target_date} - {len(all_papers)}篇",
-            content=content,
-            sender_info=config["sender"],
-            receiver_emails=os.getenv("RECEIVER_EMAILS", "").split(",")
+    try:
+        client = OpenAI(
+            api_key=openai_api_key,
+            base_url=api_base if api_base else "https://api.deepseek.com/v1"
         )
+        
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=2048
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"OpenAI处理失败: {e}")
+        return None
+
+
+def format_paper_for_email(paper, translated_summary=None, contribution_summary=None):
+    """格式化论文信息"""
+    content = f"\n{'='*60}\n"
+    content += f"📄 标题: {paper['title']}\n"
+    content += f"👥 作者: {', '.join(paper['authors'])}\n"
+    content += f"🏷️ 分类: {', '.join(paper['categories'])}\n"
+    content += f"📅 日期: {paper['pub_date']}\n"
+    
+    if paper['comments']:
+        content += f"💬 评论: {paper['comments']}\n"
+        
+    content += f"🔗 链接: https://arxiv.org/abs/{paper['arxiv_id']}\n"
+    
+    if contribution_summary:
+        content += f"\n🌟 核心贡献: {contribution_summary}\n"
+        
+    content += f"\n📑 摘要:\n{paper['summary']}\n"
+    
+    if translated_summary:
+        content += f"\n🌏 中文摘要:\n{translated_summary}\n"
+        
+    content += f"{'='*60}\n"
+    return content
+
+
+def send_email(subject, content, sender_email, sender_password, receiver_emails):
+    """发送邮件"""
+    msg = MIMEMultipart()
+    msg['From'] = email.utils.formataddr(("ArXiv助手", sender_email))
+    msg['To'] = ', '.join(receiver_emails) if isinstance(receiver_emails, list) else receiver_emails
+    msg['Subject'] = Header(subject, 'utf-8')
+    
+    body = MIMEText(content, 'plain', 'utf-8')
+    msg.attach(body)
+    
+    try:
+        with smtplib.SMTP_SSL('smtp.qq.com', 465) as server:
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+            print("邮件发送成功")
+    except Exception as e:
+        print(f"邮件发送失败: {e}")
+
+
+if __name__ == '__main__':
+    # 配置参数
+    search_terms = [t.strip().strip('"') for t in os.getenv("SEARCH_TERMS", "LLM,transformer").split(",")]
+    yesterday = get_yesterday()
+    
+    # 收集论文
+    all_papers = {}
+    for term in search_terms:
+        print(f"正在搜索: {term}")
+        papers = search_arxiv_papers(term, yesterday)
+        for p in papers:
+            all_papers[p['arxiv_id']] = p
+    
+    if not all_papers:
+        print("未找到相关论文")
+        exit()
+        
+    # 处理论文
+    email_content = f"ArXiv论文日报 - {yesterday}\n\n"
+    email_content += f"搜索关键词: {', '.join(search_terms)}\n"
+    email_content += f"共找到 {len(all_papers)} 篇论文\n\n"
+    
+    for i, (pid, paper) in enumerate(all_papers.items(), 1):
+        print(f"处理论文 {i}/{len(all_papers)}: {paper['title']}")
+        
+        # 生成中文摘要
+        translated = process_with_openai(
+            paper['summary'],
+            "将以下论文摘要翻译为中文，保留专业术语:\n{text}",
+            os.getenv("OPENAI_API_KEY"),
+            model_name=os.getenv("OPENAI_MODEL", "deepseek-chat")
+        )
+        
+        # 生成贡献总结
+        contribution = process_with_openai(
+            paper['summary'],
+            "用中文一句话总结论文的核心贡献，格式：提出XX方法解决XX问题:\n{text}",
+            os.getenv("OPENAI_API_KEY")
+        )
+        
+        email_content += format_paper_for_email(paper, translated, contribution)
+    
+    # 发送邮件
+    send_email(
+        f"ArXiv日报 {yesterday} - {len(all_papers)}篇",
+        email_content,
+        os.getenv("SENDER_EMAIL"),
+        os.getenv("SENDER_PASSWORD"),
+        os.getenv("RECEIVER_EMAILS").split(",")
+    )
