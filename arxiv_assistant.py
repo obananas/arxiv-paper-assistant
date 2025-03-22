@@ -260,7 +260,7 @@ if __name__ == '__main__':
     SENDER_PASSWORD = os.environ.get("SENDER_PASSWORD")
     RECEIVER_EMAILS = os.environ.get("RECEIVER_EMAILS", "").split(",")
     SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.qq.com")
-    SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
+    SMTP_PORT = int(os.environ.get("SMTP_PORT", "465") or 465)
 
     # OpenAI API设置
     OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
