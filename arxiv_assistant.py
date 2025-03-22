@@ -36,7 +36,10 @@ def fetch_arxiv_papers(search_term, target_date, max_retries=3):
     start = 0
     max_results = 100  # 每页最大数量
     base_url = "http://export.arxiv.org/api/query?"
-    
+    namespaces = {
+        'atom': 'http://www.w3.org/2005/Atom',
+        'arxiv': 'http://arxiv.org/schemas/atom'
+    }
     while True:
         for attempt in range(max_retries):
             try:
