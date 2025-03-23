@@ -87,17 +87,17 @@ def search_arxiv_papers(search_term, target_date, max_results=10):
             comments = comments_elem.text.strip()
 
         # 判断文章的发布日期是否为目标日期
-        if pub_date == target_date:
-            papers.append({
-                'title': title,
-                'authors': authors,
-                'url': url,
-                'arxiv_id': arxiv_id,
-                'pub_date': pub_date,
-                'summary': summary,
-                'categories': categories,
-                'comments': comments,  # 添加评论字段
-            })
+        # if pub_date == target_date:
+        papers.append({
+            'title': title,
+            'authors': authors,
+            'url': url,
+            'arxiv_id': arxiv_id,
+            'pub_date': pub_date,
+            'summary': summary,
+            'categories': categories,
+            'comments': comments,  # 添加评论字段
+        })
 
     return papers
 
